@@ -1,0 +1,23 @@
+{
+  "baseSalary": 50000,
+  "bonus": 5000,
+  "currency": "GBP",
+  "currencySymbol": "£",
+  "employersNicFactor": 0.862,
+  "esppBuyPriceUsd": 34,
+  "esppDiscountFactor": 0.85,
+  "esppLimitUsd": 25000,
+  "esppSalaryFactor": 0.15,
+  "outputPath": "wedge_json.log",
+  "quoteToken": "btgf9tf48v6thhaqadr0",
+  "quoteUrl": "https://finnhub.io/api/v1/quote?symbol=$SYMBOL&token=$QUOTETOKEN",
+  "rateUrl": "https://finnhub.io/api/v1/forex/rates?base=$CURRENCY&token=$QUOTETOKEN",
+  "rsuTotalShares": 500,
+  "rsuVestingYears": 4,
+  "symbol": "AAPL"
+}
+
+ 
+	
+	
+	
