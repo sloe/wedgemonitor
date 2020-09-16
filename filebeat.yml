@@ -1,0 +1,81 @@
+############################# Filebeat #####################################
+
+filebeat.inputs:
+
+- type: log
+  paths:
+    - C:\openhab2\userdata\logs\rfxcom.log.json
+    - C:\ProgramData\wedgemonitor\wedge_log.json
+  fields:
+    logzio_codec: json
+    token: <removed>
+    type: beats
+  fields_under_root: true
+  encoding: utf-8
+  ignore_older: 3h
+
+filebeat.registry.path: 'C:\ProgramData\Elastic\Beats\filebeat'
+
+processors:
+- dissect:
+    field: "message"
+    ignore_failure: true
+    target_prefix: ""
+    tokenizer: "%{}Message received: Raw data = %{}, Packet type = TEMPERATURE_HUMIDITY, Seq number = %{}, Sub type = TH9, Device Id = %{rfxcom.device_id}, Temperature = %{rfxcom.temperature}, Humidity = %{rfxcom.humidity}, Humidity status = %{}, Signal level = %{rfxcom.signal_level}, Battery level = %{rfxcom.battery_level}\"%{}"
+
+- script:
+    lang: javascript
+    id: input_to_metrics
+    source: >
+      function process(event) {
+        var deviceIdToName = {
+          "1793": "TopFloor",
+          "7427": "GroundFloor",
+          "21253": "Freezer",
+          "21254": "Fridge",
+          "31500": "Shed",
+          "43010": "External"
+        };
+        var deviceId = event.Get("rfxcom.device_id");
+        event.Put("event.module", "system");
+        event.Put("metricset.name", "core");
+        if (deviceId in deviceIdToName) {
+          var deviceName = deviceIdToName[deviceId];
+          var batteryLevel = parseFloat(event.Get("rfxcom.battery_level"));
+          var humidity = parseFloat(event.Get("rfxcom.humidity"));
+          var signalLevel = parseFloat(event.Get("rfxcom.signal_level"));
+          var temperature = parseFloat(event.Get("rfxcom.temperature"));
+          event.Put("system.core." + deviceName + ".battery_level", batteryLevel);
+          event.Put("system.core." + deviceName + ".device_id", parseInt(deviceId));
+          event.Put("system.core." + deviceName + ".humidity.pct", humidity);
+          event.Put("system.core." + deviceName + ".signal_level", signalLevel);
+          event.Put("system.core." + deviceName + ".temperature.C", temperature);
+        } else {
+          try {
+            var parsed = JSON.parse(event.Get("message"));
+            if ("StockPrice" in parsed) {
+              event.Put("system.core.EsppSalaryEquivalent.GBP", parsed.EsppSalaryEquivalent);
+              event.Put("system.core.RsuSalaryEquivalent.GBP", parsed.RsuSalaryEquivalent);
+              event.Put("system.core.SalaryAndBonus.GBP", parsed.SalaryAndBonus);
+              event.Put("system.core.StockPrice.USD", parsed.StockPrice);
+              event.Put("system.core.TotalSalaryEquivalent.GBP", parsed.TotalSalaryEquivalent);
+              event.Put("system.core.UsdToGbp",parsed.UsdToGbp);
+            } else {
+              event.Cancel();
+            }
+          } catch (e) {
+            event.Tag("script_exception");
+            event.Tag(e);
+          }
+        }
+      }
+- drop_fields:
+    fields: ["logzio_codec", "input.type", "log.offset", "agent.hostname", "agent.type", "agent.id", "ecs.version", "@metadata.type", "@metadata.beat", "log.file.path", "agent.ephemeral_id", "agent.name", "agent.version", "message", "rfxcom.device_id", "rfxcom.battery_level", "rfxcom.humidity", "rfxcom.signal_level", "rfxcom.temperature"]
+    ignore_missing: true
+
+############################# Output ##########################################
+output:
+  logstash:
+    hosts: ["listener.logz.io:5015"]  
+    ssl:
+      certificate_authorities: ['C:\ProgramData\Elastic\Beats\filebeat\TrustExternalCARoot_and_USERTrustRSAAAACA.crt']

@@ -70,12 +70,12 @@ class WedgeMonitorApp(object):
         LOGGER.info("Total equivalent salary: %s%.2f", currSym, totalSalaryEquiv)
 
         return {
-            "Stock price": currentQuote,
-            "%s to USD" % conf["currency"]: 1 / usdToCurrency,
-            "Salary and bonus": salaryAndBonus,
-            "RSU salary equivalent": rsuSalaryEquiv,
-            "ESPP salary equivalent": esppSalaryEquiv,
-            "Total salary equivalent": totalSalaryEquiv
+            "EsppSalaryEquivalent": esppSalaryEquiv,
+            "RsuSalaryEquivalent": rsuSalaryEquiv,
+            "SalaryAndBonus": salaryAndBonus,
+            "StockPrice": currentQuote,
+            "TotalSalaryEquivalent": totalSalaryEquiv,
+            "UsdToGbp": 1 / usdToCurrency
         }
 
 
