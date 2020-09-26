@@ -54,12 +54,31 @@ processors:
           try {
             var parsed = JSON.parse(event.Get("message"));
             if ("StockPrice" in parsed) {
+              event.Put("system.core.AspirationalTotalSalaryEquivalent.GBP", parsed.AspirationalTotalSalaryEquivalent);
+              event.Put("system.core.AspirationalEsppSalaryEquivalent.GBP", parsed.AspirationalEsppSalaryEquivalent);
+              event.Put("system.core.AspirationalRsuSalaryEquivalent.GBP", parsed.AspirationalRsuSalaryEquivalent);
+              event.Put("system.core.AspirationalDeservedTotalSalaryEquivalent.GBP", parsed.AspirationalDeservedTotalSalaryEquivalent);
+              event.Put("system.core.AspirationalDeservedEsppSalaryEquivalent.GBP", parsed.AspirationalDeservedEsppSalaryEquivalent);
+              event.Put("system.core.AspirationalDeservedRsuSalaryEquivalent.GBP", parsed.AspirationalDeservedRsuSalaryEquivalent);
+              event.Put("system.core.DeservedTotalSalaryEquivalent.GBP", parsed.DeservedTotalSalaryEquivalent);
+              event.Put("system.core.DeservedEsppSalaryEquivalent.GBP", parsed.DeservedEsppSalaryEquivalent);
+              event.Put("system.core.DeservedRsuSalaryEquivalent.GBP", parsed.DeservedRsuSalaryEquivalent);
               event.Put("system.core.EsppSalaryEquivalent.GBP", parsed.EsppSalaryEquivalent);
+              event.Put("system.core.ExpectedDeservedTotalSalaryEquivalent.GBP", parsed.ExpectedDeservedTotalSalaryEquivalent);
+              event.Put("system.core.ExpectedDeservedEsppSalaryEquivalent.GBP", parsed.ExpectedDeservedEsppSalaryEquivalent);
+              event.Put("system.core.ExpectedDeservedRsuSalaryEquivalent.GBP", parsed.ExpectedDeservedRsuSalaryEquivalent);
+              event.Put("system.core.ExpectedTotalSalaryEquivalent.GBP", parsed.ExpectedTotalSalaryEquivalent);
+              event.Put("system.core.ExpectedEsppSalaryEquivalent.GBP", parsed.ExpectedEsppSalaryEquivalent);
+              event.Put("system.core.ExpectedRsuSalaryEquivalent.GBP", parsed.ExpectedRsuSalaryEquivalent);
               event.Put("system.core.RsuSalaryEquivalent.GBP", parsed.RsuSalaryEquivalent);
               event.Put("system.core.SalaryAndBonus.GBP", parsed.SalaryAndBonus);
               event.Put("system.core.StockPrice.USD", parsed.StockPrice);
+              event.Put("system.core.StockPriceTargetHigh.USD", parsed.StockPriceTargetHigh);
+              event.Put("system.core.StockPriceTargetLow.USD", parsed.StockPriceTargetLow);
+              event.Put("system.core.StockPriceTargetMean.USD", parsed.StockPriceTargetMean);
+              event.Put("system.core.StockPriceTargetMedian.USD", parsed.StockPriceTargetMedian);
               event.Put("system.core.TotalSalaryEquivalent.GBP", parsed.TotalSalaryEquivalent);
-              event.Put("system.core.UsdToGbp",parsed.UsdToGbp);
+              event.Put("system.core.UsdToGbp", parsed.UsdToGbp);
             } else {
               event.Cancel();
             }

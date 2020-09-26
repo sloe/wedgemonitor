@@ -22,58 +22,112 @@ class WedgeMonitorApp(object):
         LOGGER.info("Loaded config %s", self.config)
 
 
+    def doEsppCalc(self, esppBuyPriceUsd, salaryAndBonus, stockQuote, usdToCurrency):
+        conf = self.config
+        esppBuyPrice = min(esppBuyPriceUsd, stockQuote) * conf["esppDiscountFactor"]
+        esppBuyAmountUsd = min(salaryAndBonus * conf["esppSalaryFactor"] / usdToCurrency, conf["esppLimitUsd"]) * conf["esppDiscountFactor"]
+        esppShareCount = int(esppBuyAmountUsd / esppBuyPrice)
+        esppProfitAmount = esppShareCount * (stockQuote - esppBuyPrice)
+        esppSalaryEquivUsd = esppProfitAmount * conf["employersNicFactor"]
+        esppSalaryEquiv = esppSalaryEquivUsd * usdToCurrency
+        LOGGER.info("You purchase %d ESPP shares per year with $%.2f, with profit equivalent to %s%.2f as salary",
+            esppShareCount, esppBuyAmountUsd, conf["currencySymbol"], esppSalaryEquiv)
+        return esppSalaryEquiv
+
+
+    def doRsuCalc(self, stockQuote, usdToCurrency):
+        conf = self.config
+        rsuSharesPerYear = int(conf["rsuTotalShares"] / conf["rsuVestingYears"])
+        rsuValueUsd = rsuSharesPerYear * stockQuote
+        rsuSalaryEquiv = rsuValueUsd * conf["employersNicFactor"] * usdToCurrency
+        LOGGER.info("You vest %d shares per year worth $%.2f, equivalent to %s%.2f as salary",
+            rsuSharesPerYear, rsuValueUsd, conf["currencySymbol"], rsuSalaryEquiv)
+        return rsuSalaryEquiv
+
     def doCalc(self):
         conf = self.config
-        currSym = conf["currencySymbol"]
 
         quoteUrl = conf["quoteUrl"].replace("$SYMBOL", conf["symbol"]).replace("$QUOTETOKEN", conf["quoteToken"])
         LOGGER.debug("Fetching %s", quoteUrl)
-        quoteResp = requests.get(quoteUrl)
-        if not quoteResp.ok:
-            LOGGER.error("Quote request failed: %s", pformat(quoteResp.__dict__))
-            quoteResp.raise_for_status()
-        currentQuote = quoteResp.json()["c"]
+        resp = requests.get(quoteUrl)
+        if not resp.ok:
+            LOGGER.error("Quote request failed: %s", pformat(resp.__dict__))
+            resp.raise_for_status()
+        currentQuote = resp.json()["c"]
         LOGGER.debug("Current quote for %s: %f", conf["symbol"], currentQuote)
 
-        rateUrl = conf["rateUrl"].replace("$CURRENCY", conf["currency"]).replace("$QUOTETOKEN", conf["quoteToken"])
+        rateUrl = conf["rateUrl"].replace("$CURRENCY", conf["currency"]).replace("$RATETOKEN", conf["rateToken"])
         LOGGER.debug("Fetching %s", rateUrl)
-        rateResp = requests.get(rateUrl)
-        if not rateResp.ok:
-            LOGGER.error("Rate request failed: %s", pformat(rateResp.__dict__))
-            rateResp.raise_for_status()
-        usdToCurrency = 1 / rateResp.json()["quote"]["USD"]
-        LOGGER.debug("Current rate for %s: %s1.00 = $%.2f (1/%.2f)", conf["currency"], currSym, usdToCurrency, 1.0/usdToCurrency)
+        resp = requests.get(rateUrl)
+        if not resp.ok:
+            LOGGER.error("Rate request failed: %s", pformat(resp.__dict__))
+            resp.raise_for_status()
+        usdToCurrency = resp.json()["USD_%s" % conf["currency"]]
+        LOGGER.debug("Current rate for %s: %s1.00 = $%.3f (1/%.3f)", conf["currency"], conf["currencySymbol"], usdToCurrency, 1.0/usdToCurrency)
+
+        targetUrl = conf["targetUrl"].replace("$SYMBOL", conf["symbol"]).replace("$QUOTETOKEN", conf["quoteToken"])
+        LOGGER.debug("Fetching %s", targetUrl)
+        resp = requests.get(targetUrl)
+        if not resp.ok:
+            LOGGER.error("Target request failed: %s", pformat(resp.__dict__))
+            resp.raise_for_status()
+        respJson = resp.json()
+        targetHigh = respJson["targetHigh"]
+        targetLow = respJson["targetLow"]
+        targetMean = respJson["targetMean"]
+        targetMedian = respJson["targetMedian"]
+        LOGGER.debug("Targets for %s: High $%.2f, Low $%.2f, Mean $%.2f, Median $%.2f", conf["symbol"], targetHigh, targetLow, targetMean, targetMedian)
 
         # Values below are annual
         salaryAndBonus = conf["baseSalary"] + conf["bonus"]
 
         # Stock numbers assume that its quote stays where it is
-        rsuSharesPerYear = int(conf["rsuTotalShares"] / conf["rsuVestingYears"])
-        rsuValueUsd = rsuSharesPerYear * currentQuote
-        rsuSalaryEquiv = rsuValueUsd * conf["employersNicFactor"] * usdToCurrency
-
-        esppBuyPrice = min(conf["esppBuyPriceUsd"], currentQuote) * conf["esppDiscountFactor"]
-        esppBuyAmountUsd = min(salaryAndBonus * conf["esppSalaryFactor"] / usdToCurrency, conf["esppLimitUsd"]) * conf["esppDiscountFactor"]
-        esppShareCount = int(esppBuyAmountUsd / esppBuyPrice)
-        esppProfitAmount = esppShareCount * (currentQuote - esppBuyPrice)
-        esppSalaryEquivUsd = esppProfitAmount * conf["employersNicFactor"]
-        esppSalaryEquiv = esppSalaryEquivUsd * usdToCurrency
+        
+        rsuSalaryEquiv = self.doRsuCalc(currentQuote, usdToCurrency)
+        aspRsuSalaryEquiv = self.doRsuCalc(targetHigh, usdToCurrency)
+        expectRsuSalaryEquiv = self.doRsuCalc(targetMedian, usdToCurrency)
+        
+        esppSalaryEquiv = self.doEsppCalc(conf["esppBuyPriceUsd"], salaryAndBonus, currentQuote, usdToCurrency)
+        deservedEsppSalaryEquiv = self.doEsppCalc(conf["deservedEsppBuyPriceUsd"], salaryAndBonus, currentQuote, usdToCurrency)
+        aspEsppSalaryEquiv = self.doEsppCalc(conf["esppBuyPriceUsd"], salaryAndBonus, targetHigh, usdToCurrency)
+        aspDeservedEsppSalaryEquiv = self.doEsppCalc(conf["deservedEsppBuyPriceUsd"], salaryAndBonus, targetHigh, usdToCurrency)
+        expectEsppSalaryEquiv = self.doEsppCalc(conf["esppBuyPriceUsd"], salaryAndBonus, targetMedian, usdToCurrency)
+        expectDeservedEsppSalaryEquiv = self.doEsppCalc(conf["deservedEsppBuyPriceUsd"], salaryAndBonus, targetMedian, usdToCurrency)
 
         totalSalaryEquiv = salaryAndBonus + rsuSalaryEquiv + esppSalaryEquiv
+        deservedTotalSalaryEquiv = salaryAndBonus + rsuSalaryEquiv + deservedEsppSalaryEquiv
+        aspTotalSalaryEquiv = salaryAndBonus + aspRsuSalaryEquiv + aspEsppSalaryEquiv
+        aspDeservedTotalSalaryEquiv = salaryAndBonus + aspRsuSalaryEquiv + aspDeservedEsppSalaryEquiv
+        expectTotalSalaryEquiv = salaryAndBonus + expectRsuSalaryEquiv + expectEsppSalaryEquiv
+        expectDeservedTotalSalaryEquiv = salaryAndBonus + expectRsuSalaryEquiv + expectDeservedEsppSalaryEquiv
 
-        LOGGER.info("Your total salary is %s%.2f", currSym, salaryAndBonus)
-        LOGGER.info("You vest %d shares per year worth $%.2f, equivalent to %s%.2f as salary",
-                    rsuSharesPerYear, rsuValueUsd, currSym, rsuSalaryEquiv)
-        LOGGER.info("You purchase %d ESPP shares per year with $%.2f, with profit equivalent to %s%.2f as salary",
-                    esppShareCount, esppBuyAmountUsd, currSym, esppSalaryEquiv)
-
-        LOGGER.info("Total equivalent salary: %s%.2f", currSym, totalSalaryEquiv)
+        LOGGER.info("Your total salary is %s%.2f", conf["currencySymbol"], salaryAndBonus)
+        LOGGER.info("Total equivalent salary: %s%.2f", conf["currencySymbol"], totalSalaryEquiv)
 
         return {
+            "AspirationalTotalSalaryEquivalent": aspTotalSalaryEquiv,
+            "AspirationalEsppSalaryEquivalent": aspEsppSalaryEquiv,
+            "AspirationalRsuSalaryEquivalent": aspRsuSalaryEquiv,
+            "AspirationalDeservedTotalSalaryEquivalent": aspDeservedTotalSalaryEquiv,
+            "AspirationalDeservedEsppSalaryEquivalent": aspDeservedEsppSalaryEquiv,
+            "AspirationalDeservedRsuSalaryEquivalent": aspRsuSalaryEquiv,
+            "DeservedTotalSalaryEquivalent": deservedTotalSalaryEquiv,
+            "DeservedEsppSalaryEquivalent": deservedEsppSalaryEquiv,
+            "DeservedRsuSalaryEquivalent": rsuSalaryEquiv,
             "EsppSalaryEquivalent": esppSalaryEquiv,
+            "ExpectedDeservedTotalSalaryEquivalent": expectDeservedTotalSalaryEquiv,
+            "ExpectedDeservedEsppSalaryEquivalent": expectDeservedEsppSalaryEquiv,
+            "ExpectedDeservedRsuSalaryEquivalent": expectRsuSalaryEquiv,
+            "ExpectedTotalSalaryEquivalent": expectTotalSalaryEquiv,
+            "ExpectedEsppSalaryEquivalent": expectEsppSalaryEquiv,
+            "ExpectedRsuSalaryEquivalent": expectRsuSalaryEquiv,
             "RsuSalaryEquivalent": rsuSalaryEquiv,
             "SalaryAndBonus": salaryAndBonus,
             "StockPrice": currentQuote,
+            "StockPriceTargetHigh": targetHigh,
+            "StockPriceTargetLow": targetLow,
+            "StockPriceTargetMean": targetMean,
+            "StockPriceTargetMedian": targetMedian,
             "TotalSalaryEquivalent": totalSalaryEquiv,
             "UsdToGbp": 1 / usdToCurrency
         }
@@ -95,7 +149,7 @@ class WedgeMonitorApp(object):
 
         outputPath = self.config["outputPath"]
         if outputPath:
-            jsonCalcElems = ['"%s":%.2f' % (k, v) for k, v in calcResult.items()]
+            jsonCalcElems = ['"%s":%.3f' % (k, v) for k, v in calcResult.items()]
             logLine = '{"timestamp":"%sZ",%s}\n' % (timeNow.replace(microsecond=0), ",".join(jsonCalcElems))
             for i in itertools.count():
                 try:
@@ -130,8 +184,3 @@ if __name__ == '__main__':
     app = WedgeMonitorApp()
     app.loadConfig()
     app.enter()
-
- 
-	
-	
-	
