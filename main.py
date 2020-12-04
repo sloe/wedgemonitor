@@ -59,10 +59,18 @@ class WedgeMonitorApp(object):
         rateUrl = conf["rateUrl"].replace("$CURRENCY", conf["currency"]).replace("$RATETOKEN", conf["rateToken"])
         LOGGER.debug("Fetching %s", rateUrl)
         resp = requests.get(rateUrl)
-        if not resp.ok:
+        if resp.ok:
+            usdToCurrency = resp.json()["USD_%s" % conf["currency"]]
+        else:
             LOGGER.error("Rate request failed: %s", pformat(resp.__dict__))
-            resp.raise_for_status()
-        usdToCurrency = resp.json()["USD_%s" % conf["currency"]]
+            rateUrl = conf["rateUrlBackup"].replace("$CURRENCY", conf["currency"]).replace("$QUOTETOKEN", conf["quoteToken"])
+            LOGGER.debug("Fetching back rate URL %s", rateUrl)
+            rateResp = requests.get(rateUrl)
+            if not rateResp.ok:
+                LOGGER.error("Backup rate request failed: %s", pformat(rateResp.__dict__))
+                rateResp.raise_for_status()
+            usdToCurrency = 1 / rateResp.json()["quote"]["USD"]
+
         LOGGER.debug("Current rate for %s: %s1.00 = $%.3f (1/%.3f)", conf["currency"], conf["currencySymbol"], usdToCurrency, 1.0/usdToCurrency)
 
         targetUrl = conf["targetUrl"].replace("$SYMBOL", conf["symbol"]).replace("$QUOTETOKEN", conf["quoteToken"])

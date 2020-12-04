@@ -14,6 +14,7 @@
   "quoteUrl": "https://finnhub.io/api/v1/quote?symbol=$SYMBOL&token=$QUOTETOKEN",
   "rateToken": "0c002295388115a91edf",
   "rateUrl": "https://free.currconv.com/api/v7/convert?q=USD_$CURRENCY&compact=ultra&apiKey=$RATETOKEN",
+  "rateUrlBackup": "https://finnhub.io/api/v1/forex/rates?base=$CURRENCY&token=$QUOTETOKEN",
   "targetUrl": "https://finnhub.io/api/v1/stock/price-target?symbol=$SYMBOL&token=$QUOTETOKEN",
   "rsuTotalShares": 500,
   "rsuVestingYears": 4,
