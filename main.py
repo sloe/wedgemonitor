@@ -7,12 +7,62 @@ from pprint import pformat
 import requests
 import time
 
+from opentelemetry import metrics
+from opentelemetry.exporter.prometheus_remote_write import PrometheusRemoteWriteMetricsExporter
+from opentelemetry.sdk.metrics import MeterProvider
+
 LOGGER=logging.getLogger('main')
 
 class WedgeMonitorApp(object):
+    DESCRIPTIONS = {
+        "DeservedTotalSalaryEquivalent": "Total salary equivalent (deserved)",
+        "DeservedEsppSalaryEquivalent": "ESPP salary equivalent (deserved)",
+        "DeservedRsuSalaryEquivalent": "RSU salary equivalent (deserved)",
+        "EsppSalaryEquivalent": "ESPP salary equivalent",
+        # "ExpectedDeservedTotalSalaryEquivalent": expectDeservedTotalSalaryEquiv,
+        # "ExpectedDeservedEsppSalaryEquivalent": expectDeservedEsppSalaryEquiv,
+        # "ExpectedDeservedRsuSalaryEquivalent": expectRsuSalaryEquiv,
+        # "ExpectedTotalSalaryEquivalent": expectTotalSalaryEquiv,
+        # "ExpectedEsppSalaryEquivalent": expectEsppSalaryEquiv,
+        # "ExpectedRsuSalaryEquivalent": expectRsuSalaryEquiv,
+        "RsuSalaryEquivalent": "RSU salary equivalent",
+        "SalaryAndBonus": "Salary and bonus",
+        "StockPrice": "Stock price",
+        # "StockPriceTargetHigh": targetHigh,
+        # "StockPriceTargetLow": targetLow,
+        # "StockPriceTargetMean": targetMean,
+        # "StockPriceTargetMedian": targetMedian,
+        "TotalSalaryEquivalent": "Total salary equivalent",
+        "UsdToGbp": "USD to GBP"
+    }
+
+    UNITS = {
+        "DeservedTotalSalaryEquivalent": "£",
+        "DeservedEsppSalaryEquivalent": "£",
+        "DeservedRsuSalaryEquivalent": "£",
+        "EsppSalaryEquivalent": "£",
+        # "ExpectedDeservedTotalSalaryEquivalent": expectDeservedTotalSalaryEquiv,
+        # "ExpectedDeservedEsppSalaryEquivalent": expectDeservedEsppSalaryEquiv,
+        # "ExpectedDeservedRsuSalaryEquivalent": expectRsuSalaryEquiv,
+        # "ExpectedTotalSalaryEquivalent": expectTotalSalaryEquiv,
+        # "ExpectedEsppSalaryEquivalent": expectEsppSalaryEquiv,
+        # "ExpectedRsuSalaryEquivalent": expectRsuSalaryEquiv,
+        "RsuSalaryEquivalent": "£",
+        "SalaryAndBonus": "£",
+        "StockPrice": "$",
+        # "StockPriceTargetHigh": targetHigh,
+        # "StockPriceTargetLow": targetLow,
+        # "StockPriceTargetMean": targetMean,
+        # "StockPriceTargetMedian": targetMedian,
+        "TotalSalaryEquivalent": "£",
+        "UsdToGbp": "1"
+    }
+
     def __init__(self):
+        self.exporter = None
         self.lastMinute = 0
         self.lastSecond = 0
+        self.valueRecorders = {}
 
 
     def loadConfig(self):
@@ -20,6 +70,20 @@ class WedgeMonitorApp(object):
         with open(configFilename) as fp:
             self.config = json.load(fp)
         LOGGER.info("Loaded config %s", self.config)
+
+
+    def startExporter(self):
+        self.exporter = PrometheusRemoteWriteMetricsExporter(
+            endpoint=self.config["logzUrl"],
+            headers={
+                "Authorization": "Bearer " + self.config["logzToken"],
+            }
+        )
+        push_interval = self.config["logzPushInterval"]
+
+        metrics.set_meter_provider(MeterProvider())
+        self.meter = metrics.get_meter(__name__)
+        metrics.get_meter_provider().start_pipeline(self.meter, self.exporter, push_interval)
 
 
     def doEsppCalc(self, esppBuyPriceUsd, salaryAndBonus, stockQuote, usdToCurrency):
@@ -49,7 +113,7 @@ class WedgeMonitorApp(object):
 
         quoteUrl = conf["quoteUrl"].replace("$SYMBOL", conf["symbol"]).replace("$QUOTETOKEN", conf["quoteToken"])
         LOGGER.debug("Fetching %s", quoteUrl)
-        resp = requests.get(quoteUrl)
+        resp = requests.get(quoteUrl, timeout=10)
         if not resp.ok:
             LOGGER.error("Quote request failed: %s", pformat(resp.__dict__))
             resp.raise_for_status()
@@ -58,14 +122,14 @@ class WedgeMonitorApp(object):
 
         rateUrl = conf["rateUrl"].replace("$CURRENCY", conf["currency"]).replace("$RATETOKEN", conf["rateToken"])
         LOGGER.debug("Fetching %s", rateUrl)
-        resp = requests.get(rateUrl)
+        resp = requests.get(rateUrl, timeout=10)
         if resp.ok:
             usdToCurrency = resp.json()["USD_%s" % conf["currency"]]
         else:
             LOGGER.error("Rate request failed: %s", pformat(resp.__dict__))
             rateUrl = conf["rateUrlBackup"].replace("$CURRENCY", conf["currency"]).replace("$QUOTETOKEN", conf["quoteToken"])
             LOGGER.debug("Fetching back rate URL %s", rateUrl)
-            rateResp = requests.get(rateUrl)
+            rateResp = requests.get(rateUrl, timeout=10)
             if not rateResp.ok:
                 LOGGER.error("Backup rate request failed: %s", pformat(rateResp.__dict__))
                 rateResp.raise_for_status()
@@ -73,18 +137,18 @@ class WedgeMonitorApp(object):
 
         LOGGER.debug("Current rate for %s: %s1.00 = $%.3f (1/%.3f)", conf["currency"], conf["currencySymbol"], usdToCurrency, 1.0/usdToCurrency)
 
-        targetUrl = conf["targetUrl"].replace("$SYMBOL", conf["symbol"]).replace("$QUOTETOKEN", conf["quoteToken"])
-        LOGGER.debug("Fetching %s", targetUrl)
-        resp = requests.get(targetUrl)
-        if not resp.ok:
-            LOGGER.error("Target request failed: %s", pformat(resp.__dict__))
-            resp.raise_for_status()
-        respJson = resp.json()
-        targetHigh = respJson["targetHigh"]
-        targetLow = respJson["targetLow"]
-        targetMean = respJson["targetMean"]
-        targetMedian = respJson["targetMedian"]
-        LOGGER.debug("Targets for %s: High $%.2f, Low $%.2f, Mean $%.2f, Median $%.2f", conf["symbol"], targetHigh, targetLow, targetMean, targetMedian)
+        # targetUrl = conf["targetUrl"].replace("$SYMBOL", conf["symbol"]).replace("$QUOTETOKEN", conf["quoteToken"])
+        # LOGGER.debug("Fetching %s", targetUrl)
+        # resp = requests.get(targetUrl, timeout=10)
+        # if not resp.ok:
+        #     LOGGER.error("Target request failed: %s", pformat(resp.__dict__))
+        #     resp.raise_for_status()
+        # respJson = resp.json()
+        # targetHigh = respJson["targetHigh"]
+        # targetLow = respJson["targetLow"]
+        # targetMean = respJson["targetMean"]
+        # targetMedian = respJson["targetMedian"]
+        # LOGGER.debug("Targets for %s: High $%.2f, Low $%.2f, Mean $%.2f, Median $%.2f", conf["symbol"], targetHigh, targetLow, targetMean, targetMedian)
 
         # Values below are annual
         salaryAndBonus = conf["baseSalary"] + conf["bonus"]
@@ -92,69 +156,71 @@ class WedgeMonitorApp(object):
         # Stock numbers assume that its quote stays where it is
         
         rsuSalaryEquiv = self.doRsuCalc(currentQuote, usdToCurrency)
-        aspRsuSalaryEquiv = self.doRsuCalc(targetHigh, usdToCurrency)
-        expectRsuSalaryEquiv = self.doRsuCalc(targetMedian, usdToCurrency)
+        # aspRsuSalaryEquiv = self.doRsuCalc(targetHigh, usdToCurrency)
+        # expectRsuSalaryEquiv = self.doRsuCalc(targetMedian, usdToCurrency)
         
         esppSalaryEquiv = self.doEsppCalc(conf["esppBuyPriceUsd"], salaryAndBonus, currentQuote, usdToCurrency)
         deservedEsppSalaryEquiv = self.doEsppCalc(conf["deservedEsppBuyPriceUsd"], salaryAndBonus, currentQuote, usdToCurrency)
-        aspEsppSalaryEquiv = self.doEsppCalc(conf["esppBuyPriceUsd"], salaryAndBonus, targetHigh, usdToCurrency)
-        aspDeservedEsppSalaryEquiv = self.doEsppCalc(conf["deservedEsppBuyPriceUsd"], salaryAndBonus, targetHigh, usdToCurrency)
-        expectEsppSalaryEquiv = self.doEsppCalc(conf["esppBuyPriceUsd"], salaryAndBonus, targetMedian, usdToCurrency)
-        expectDeservedEsppSalaryEquiv = self.doEsppCalc(conf["deservedEsppBuyPriceUsd"], salaryAndBonus, targetMedian, usdToCurrency)
+        # aspEsppSalaryEquiv = self.doEsppCalc(conf["esppBuyPriceUsd"], salaryAndBonus, targetHigh, usdToCurrency)
+        # aspDeservedEsppSalaryEquiv = self.doEsppCalc(conf["deservedEsppBuyPriceUsd"], salaryAndBonus, targetHigh, usdToCurrency)
+        # expectEsppSalaryEquiv = self.doEsppCalc(conf["esppBuyPriceUsd"], salaryAndBonus, targetMedian, usdToCurrency)
+        # expectDeservedEsppSalaryEquiv = self.doEsppCalc(conf["deservedEsppBuyPriceUsd"], salaryAndBonus, targetMedian, usdToCurrency)
 
         totalSalaryEquiv = salaryAndBonus + rsuSalaryEquiv + esppSalaryEquiv
         deservedTotalSalaryEquiv = salaryAndBonus + rsuSalaryEquiv + deservedEsppSalaryEquiv
-        aspTotalSalaryEquiv = salaryAndBonus + aspRsuSalaryEquiv + aspEsppSalaryEquiv
-        aspDeservedTotalSalaryEquiv = salaryAndBonus + aspRsuSalaryEquiv + aspDeservedEsppSalaryEquiv
-        expectTotalSalaryEquiv = salaryAndBonus + expectRsuSalaryEquiv + expectEsppSalaryEquiv
-        expectDeservedTotalSalaryEquiv = salaryAndBonus + expectRsuSalaryEquiv + expectDeservedEsppSalaryEquiv
+        # aspTotalSalaryEquiv = salaryAndBonus + aspRsuSalaryEquiv + aspEsppSalaryEquiv
+        # aspDeservedTotalSalaryEquiv = salaryAndBonus + aspRsuSalaryEquiv + aspDeservedEsppSalaryEquiv
+        # expectTotalSalaryEquiv = salaryAndBonus + expectRsuSalaryEquiv + expectEsppSalaryEquiv
+        # expectDeservedTotalSalaryEquiv = salaryAndBonus + expectRsuSalaryEquiv + expectDeservedEsppSalaryEquiv
 
         LOGGER.info("Your total salary is %s%.2f", conf["currencySymbol"], salaryAndBonus)
         LOGGER.info("Total equivalent salary: %s%.2f", conf["currencySymbol"], totalSalaryEquiv)
 
         return {
-            "AspirationalTotalSalaryEquivalent": aspTotalSalaryEquiv,
-            "AspirationalEsppSalaryEquivalent": aspEsppSalaryEquiv,
-            "AspirationalRsuSalaryEquivalent": aspRsuSalaryEquiv,
-            "AspirationalDeservedTotalSalaryEquivalent": aspDeservedTotalSalaryEquiv,
-            "AspirationalDeservedEsppSalaryEquivalent": aspDeservedEsppSalaryEquiv,
-            "AspirationalDeservedRsuSalaryEquivalent": aspRsuSalaryEquiv,
+            # "AspirationalTotalSalaryEquivalent": aspTotalSalaryEquiv,
+            # "AspirationalEsppSalaryEquivalent": aspEsppSalaryEquiv,
+            # "AspirationalRsuSalaryEquivalent": aspRsuSalaryEquiv,
+            # "AspirationalDeservedTotalSalaryEquivalent": aspDeservedTotalSalaryEquiv,
+            # "AspirationalDeservedEsppSalaryEquivalent": aspDeservedEsppSalaryEquiv,
+            # "AspirationalDeservedRsuSalaryEquivalent": aspRsuSalaryEquiv,
             "DeservedTotalSalaryEquivalent": deservedTotalSalaryEquiv,
             "DeservedEsppSalaryEquivalent": deservedEsppSalaryEquiv,
             "DeservedRsuSalaryEquivalent": rsuSalaryEquiv,
             "EsppSalaryEquivalent": esppSalaryEquiv,
-            "ExpectedDeservedTotalSalaryEquivalent": expectDeservedTotalSalaryEquiv,
-            "ExpectedDeservedEsppSalaryEquivalent": expectDeservedEsppSalaryEquiv,
-            "ExpectedDeservedRsuSalaryEquivalent": expectRsuSalaryEquiv,
-            "ExpectedTotalSalaryEquivalent": expectTotalSalaryEquiv,
-            "ExpectedEsppSalaryEquivalent": expectEsppSalaryEquiv,
-            "ExpectedRsuSalaryEquivalent": expectRsuSalaryEquiv,
+            # "ExpectedDeservedTotalSalaryEquivalent": expectDeservedTotalSalaryEquiv,
+            # "ExpectedDeservedEsppSalaryEquivalent": expectDeservedEsppSalaryEquiv,
+            # "ExpectedDeservedRsuSalaryEquivalent": expectRsuSalaryEquiv,
+            # "ExpectedTotalSalaryEquivalent": expectTotalSalaryEquiv,
+            # "ExpectedEsppSalaryEquivalent": expectEsppSalaryEquiv,
+            # "ExpectedRsuSalaryEquivalent": expectRsuSalaryEquiv,
             "RsuSalaryEquivalent": rsuSalaryEquiv,
             "SalaryAndBonus": salaryAndBonus,
             "StockPrice": currentQuote,
-            "StockPriceTargetHigh": targetHigh,
-            "StockPriceTargetLow": targetLow,
-            "StockPriceTargetMean": targetMean,
-            "StockPriceTargetMedian": targetMedian,
+            # "StockPriceTargetHigh": targetHigh,
+            # "StockPriceTargetLow": targetLow,
+            # "StockPriceTargetMean": targetMean,
+            # "StockPriceTargetMedian": targetMedian,
             "TotalSalaryEquivalent": totalSalaryEquiv,
             "UsdToGbp": 1 / usdToCurrency
         }
 
 
-    def createRecord(self, timeNow):
+    def calcResult(self, timeNow):
         LOGGER.info("Creating record at %s", timeNow)
         for i in itertools.count():
             try:
                 calcResult = self.doCalc()
-                break
+                return calcResult
             except Exception as e:
                 if i < 10:
                     LOGGER.warning("Failed to calculate result, will retry: %s", e)
                 else:
                     LOGGER.error("Failed to calculate result, giving up: %s", e)
-                    return
+                    return None
             time.sleep(1)
 
+
+    def createRecord(self, timeNow, calcResult):
         outputPath = self.config["outputPath"]
         if outputPath:
             jsonCalcElems = ['"%s":%.3f' % (k, v) for k, v in calcResult.items()]
@@ -174,6 +240,21 @@ class WedgeMonitorApp(object):
                 time.sleep(1)
 
 
+    def updateMeters(self, timeNow, calcResult):
+        LOGGER.info("Updating meters at %s", timeNow)
+        for k, v in calcResult.items():
+            if k != "timestamp":
+                if k not in self.valueRecorders:
+                    self.valueRecorders[k] = self.meter.create_valuerecorder(
+                        description=self.DESCRIPTIONS[k],
+                        name=k,
+                        unit=self.UNITS[k],
+                        value_type=float
+                    )
+                labels = {}
+                self.valueRecorders[k].record(v, labels)
+
+
     def enter(self):
         LOGGER.info("Entered WedgeMonitorApp")
         while True:
@@ -181,7 +262,9 @@ class WedgeMonitorApp(object):
             secondNow = timeNow.second
             minuteNow = timeNow.minute
             if self.lastMinute != minuteNow and secondNow >= 30 and self.lastSecond < 30:
-                self.createRecord(timeNow)
+                calcResult = self.calcResult(timeNow)
+                self.updateMeters(timeNow, calcResult)
+                self.createRecord(timeNow, calcResult)
                 self.lastMinute = minuteNow
             self.lastSecond = secondNow
             time.sleep(1.01 - (timeNow.microsecond / 1e7)) # Home in on exact second tickover
@@ -191,4 +274,5 @@ if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s', level=logging.DEBUG)
     app = WedgeMonitorApp()
     app.loadConfig()
+    app.startExporter()
     app.enter()
